@@ -17,7 +17,7 @@ log = "0.4.25"
 version = "0.34.1"
 features = ["logger", "panic_handler"]
 
-# [dependencies.wasmtime]
-# version = "29.0.1"
-# default-features = false
-# features = ["runtime"]
+[dependencies.wasmtime]
+version = "29.0.1"
+default-features = false
+features = ["component-model", "gc", "pulley", "runtime"]
