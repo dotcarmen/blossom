@@ -3,4 +3,21 @@ name = "blossom"
 version = "0.1.0"
 edition = "2024"
 
+[profile.dev]
+panic = "abort"
+
+[features]
+default = []
+qemu = ["uefi/qemu"]
+
 [dependencies]
+log = "0.4.25"
+
+[dependencies.uefi]
+version = "0.34.1"
+features = ["logger", "panic_handler"]
+
+# [dependencies.wasmtime]
+# version = "29.0.1"
+# default-features = false
+# features = ["runtime"]
