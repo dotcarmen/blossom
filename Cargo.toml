@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+authors = ["Carmen <carmen@dotcarmen.dev>"]
+edition = "2024"
+repository = "https://github.com/dotcarmen/blossom"
+version = "0.0.1"
+
+[workspace.dependencies]
+tracing = "0.1.41"
