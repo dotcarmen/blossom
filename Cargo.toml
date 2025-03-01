@@ -9,4 +9,4 @@ repository = "https://github.com/dotcarmen/blossom"
 version = "0.0.1"
 
 [workspace.dependencies]
-tracing = "0.1.41"
+log = "0.4.25"

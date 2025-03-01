@@ -1,1 +1,4 @@
-target/
+/esp/
+/target/
+
+vars.fd
