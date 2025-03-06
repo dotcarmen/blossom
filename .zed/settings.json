@@ -1,0 +1,9 @@
+{
+	"lsp": {
+		"zls": {
+			"binary": {
+				"path": "zls"
+			}
+		}
+	}
+}
