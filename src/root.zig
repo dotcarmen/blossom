@@ -7,21 +7,21 @@ const testing = std.testing;
 const uefi = std.os.uefi;
 const unicode = std.unicode;
 
-// pub export fn main() std.os.uefi.Status {
-//     printLiteral("hello, world!\r\n");
+pub fn main() std.os.uefi.Status {
+    printLiteral("hello, world!\r\n");
 
-//     if (builtin.is_test) {
-//         printLiteral("running tests: ");
-//         for (builtin.test_functions) |test_fn| {
-//             print(test_fn.name);
-//             printLiteral("ok");
-//         }
-//     }
+    if (builtin.is_test) {
+        printLiteral("running tests: ");
+        for (builtin.test_functions) |test_fn| {
+            print(test_fn.name);
+            printLiteral("ok");
+        }
+    }
 
-//     while (true) {}
+    while (true) {}
 
-//     return .success;
-// }
+    return .success;
+}
 
 pub fn printLiteral(comptime str: []const u8) void {
     _ = uefi.system_table.con_out.?.outputString(
