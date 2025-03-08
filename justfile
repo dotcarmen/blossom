@@ -1,9 +1,5 @@
-alias b := build
-build target='image':
-	zig build {{target}}
-
 alias r := run
-run target='image': (build target) vars-file
+run target='install': (build target) vars-file
 	# TODO: won't work on non-macos
 	qemu-system-aarch64 -accel hvf \
 		-m 2048 -cpu cortex-a72 -M virt \
@@ -11,6 +7,10 @@ run target='image': (build target) vars-file
 		-drive file=vars.fd,if=pflash,format=raw \
 		-drive format=raw,file=fat:rw:zig-out \
 		-serial stdio
+
+alias b := build
+build target='install':
+	zig build {{target}}
 
 vars-file:
 	-rm vars.fd
