@@ -19,8 +19,8 @@ fn logFnInner(
     comptime scope: @TypeOf(.enum_lit),
     comptime format: []const u8,
     args: anytype,
-) anyerror!void {
-    const console = uefi.system_table.con_out orelse return error.NoBootServices;
+) !void {
+    const console = uefi.system_table.con_out.?;
     const writer = std.io.AnyWriter{
         .context = console,
         .writeFn = @ptrCast(&write),
