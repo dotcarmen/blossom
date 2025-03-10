@@ -9,18 +9,18 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     _ = b.step("test", "build image with tests");
 
-    // const kernel_target = b.resolveTargetQuery(.{
-    //     .cpu_arch = .aarch64,
-    //     .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a72 },
-    //     .os_tag = .freestanding,
-    // });
-    // const kernel = b.createModule(.{
-    //     .root_source_file = b.path("kernel/root.zig"),
-    //     .code_model = .small,
-    //     .optimize = optimize,
-    //     .target = kernel_target,
-    // });
-    // image_steps(b, kernel, "blossomk");
+    const kernel_target = b.resolveTargetQuery(.{
+        .cpu_arch = .aarch64,
+        .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a72 },
+        .os_tag = .freestanding,
+    });
+    const kernel = b.createModule(.{
+        .root_source_file = b.path("kernel/root.zig"),
+        .code_model = .small,
+        .optimize = optimize,
+        .target = kernel_target,
+    });
+    image_steps(b, kernel, "blossomk");
 
     const boot_target = b.resolveTargetQuery(.{
         .cpu_arch = .aarch64,

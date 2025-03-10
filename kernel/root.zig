@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const uefi = std.os.uefi;
 
-const klog = @import("klog");
+const klog = @import("klog.zig");
 
 pub const std_options = std.Options{
     .logFn = klog.logfn,
