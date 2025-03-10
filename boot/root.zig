@@ -30,6 +30,12 @@ pub fn main() uefi.Status {
         return uefilib.errorToStatus(err);
     };
 
+    {
+        const code_bytes: [*]const u8 = @ptrCast(entry);
+        const code: []const u8 = code_bytes[0..50];
+        log.debug("code: {x}", .{code});
+    }
+
     log.info("exiting boot services...", .{});
     _ = uefi.system_table.boot_services.?.exitBootServices(uefi.handle, 123);
 
@@ -81,12 +87,7 @@ fn loadOS() uefi.Status.Error!*const fn () callconv(.c) usize {
         log.err("failed to read elf header: {any}", .{err});
         return uefi.Status.Error.CompromisedData;
     };
-    log.debug("loaded {any} for {any}-{any}", .{
-        elf_header.type,
-        elf_header.machine,
-        elf_header.os_abi,
-    });
-    log.debug("entrypoint is address {x}", .{elf_header.entry});
+    log.debug("loaded elf header {any}", .{elf_header});
     if (!elf_header.is_64) {
         // TODO: should i do 32-bit?
         log.err("elf image is not 64-bit", .{});
@@ -101,12 +102,7 @@ fn loadOS() uefi.Status.Error!*const fn () callconv(.c) usize {
         log.err("failed to read program header: {any}", .{err});
         return uefi.Status.Error.CompromisedData;
     }) |phdr| {
-        log.debug("program header {x}: {x}-{x} ({x} bytes)", .{
-            phdr.p_type,
-            phdr.p_vaddr,
-            phdr.p_vaddr + phdr.p_memsz,
-            phdr.p_memsz,
-        });
+        log.debug("program header: {any}", .{phdr});
 
         if (phdr.p_type == elf.PT_LOAD) {
             kernel_addr_start = @min(kernel_addr_start, phdr.p_vaddr);
@@ -147,6 +143,10 @@ fn loadOS() uefi.Status.Error!*const fn () callconv(.c) usize {
             log.debug("loading at offset {x}..+{x}", .{ phdr.p_vaddr, phdr.p_filesz });
             const off = phdr.p_vaddr - kernel_addr_start;
             const dest = kmem[off .. off + phdr.p_filesz];
+            @constCast(kernel).seekableStream().seekTo(phdr.p_offset) catch |err| {
+                log.err("failed to seek kernel image: {any}", .{err});
+                return uefi.Status.Error.CompromisedData;
+            };
             @constCast(kernel).reader().readNoEof(dest) catch |err| {
                 log.err("failed to read kernel image: {any}", .{err});
                 return uefi.Status.Error.CompromisedData;
@@ -156,7 +156,7 @@ fn loadOS() uefi.Status.Error!*const fn () callconv(.c) usize {
 
     log.info("blossom successfully loaded", .{});
 
-    return @ptrFromInt(@intFromPtr(kmem) + elf_header.entry);
+    return @ptrFromInt(@intFromPtr(kmem) + elf_header.entry - kernel_addr_start);
 }
 
 pub const panic = std.debug.FullPanic(panicFn);
