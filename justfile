@@ -6,7 +6,7 @@ run target='install': (build target) vars-file
 		-drive file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd,if=pflash,format=raw,readonly=on \
 		-drive file=vars.fd,if=pflash,format=raw \
 		-drive format=raw,file=fat:rw:zig-out \
-		-serial stdio
+		-nographic
 
 alias b := build
 build target='install':

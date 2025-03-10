@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const elf = std.elf;
 const log = std.log;
 const uefi = std.os.uefi;
 const unicode = std.unicode;
@@ -24,15 +25,22 @@ pub fn main() uefi.Status {
     }
 
     log.info("loading blossom...", .{});
-    loadOS() catch |err| {
+    const entry = loadOS() catch |err| {
         log.err("error loading blossom: {any}", .{err});
         return uefilib.errorToStatus(err);
     };
 
+    log.info("exiting boot services...", .{});
+    _ = uefi.system_table.boot_services.?.exitBootServices(uefi.handle, 123);
+
+    log.info("starting kernel {X}", .{entry});
+    const res = entry();
+    log.info("kernel returned {d}", .{res});
+
     return .success;
 }
 
-fn loadOS() uefi.Status.Error!void {
+fn loadOS() uefi.Status.Error!*const fn () callconv(.c) usize {
     const boot_services = uefi.system_table.boot_services.?;
 
     // TODO: defer close protocols
@@ -54,7 +62,7 @@ fn loadOS() uefi.Status.Error!void {
     defer _ = kernel.close();
 
     log.info("kernel file successfully opened", .{});
-    var info: struct { info: uefi.FileInfo, name: [32]u8 } = undefined;
+    var info: extern struct { info: uefi.FileInfo, name: [32]u8 } = undefined;
     var len: usize = @sizeOf(@TypeOf(info));
     try kernel.getInfo(&uefi.FileInfo.guid, &len, @ptrCast(&info)).err();
     var real_name: [32]u8 = undefined;
@@ -62,17 +70,93 @@ fn loadOS() uefi.Status.Error!void {
     len = 0;
     while (utf16_name[len] != 0) len += 1;
     const name_len = unicode.utf16LeToUtf8(&real_name, utf16_name[0..len]) catch return uefi.Status.Error.BadBufferSize;
-    log.info("file {s} size {x} ({x} on disk) bytes", .{
+    log.debug("file {s} size {x} ({x} on disk) bytes", .{
         real_name[0..name_len],
         info.info.file_size,
         info.info.physical_size,
     });
 
-    log.info("blossom loaded. press any key to continue...", .{});
-    var events = [_]uefi.Event{uefi.system_table.con_in.?.wait_for_key};
-    // TODO: idk lol
-    var idx: usize = 0;
-    try boot_services.waitForEvent(1, &events, &idx).err();
+    log.info("loading elf image...", .{});
+    const elf_header = elf.Header.read(@constCast(kernel)) catch |err| {
+        log.err("failed to read elf header: {any}", .{err});
+        return uefi.Status.Error.CompromisedData;
+    };
+    log.debug("loaded {any} for {any}-{any}", .{
+        elf_header.type,
+        elf_header.machine,
+        elf_header.os_abi,
+    });
+    log.debug("entrypoint is address {x}", .{elf_header.entry});
+    if (!elf_header.is_64) {
+        // TODO: should i do 32-bit?
+        log.err("elf image is not 64-bit", .{});
+        return uefi.Status.Error.Unsupported;
+    }
+
+    var pheaders = elf_header.program_header_iterator(@constCast(kernel));
+
+    var kernel_addr_start: usize = std.math.maxInt(usize);
+    var kernel_addr_end: usize = 0;
+    while (pheaders.next() catch |err| {
+        log.err("failed to read program header: {any}", .{err});
+        return uefi.Status.Error.CompromisedData;
+    }) |phdr| {
+        log.debug("program header {x}: {x}-{x} ({x} bytes)", .{
+            phdr.p_type,
+            phdr.p_vaddr,
+            phdr.p_vaddr + phdr.p_memsz,
+            phdr.p_memsz,
+        });
+
+        if (phdr.p_type == elf.PT_LOAD) {
+            kernel_addr_start = @min(kernel_addr_start, phdr.p_vaddr);
+            kernel_addr_end = @max(kernel_addr_end, phdr.p_vaddr + phdr.p_memsz);
+        }
+    }
+
+    // TODO: 4K pages... maybe do 2M instead?
+    const num_kernel_pages = (kernel_addr_end - kernel_addr_start + 4095) / 4096;
+
+    log.info("allocating {d} kernel pages for {x}-{x} ({x} bytes)", .{
+        num_kernel_pages,
+        kernel_addr_start,
+        kernel_addr_end,
+        kernel_addr_end - kernel_addr_start,
+    });
+    var kmem: [*]align(4096) u8 = undefined;
+    try boot_services.allocatePages(
+        .allocate_any_pages,
+        .loader_code,
+        num_kernel_pages,
+        &kmem,
+    ).err();
+    const kmem_ptr: usize = @intFromPtr(kmem);
+    log.info("kernel memory at {x}", .{kmem_ptr});
+    @memset(blk: {
+        const res: [*]u8 = @alignCast(kmem);
+        break :blk res[0 .. kernel_addr_end - kernel_addr_start];
+    }, 0);
+
+    log.info("loading kernel into memory", .{});
+    pheaders = elf_header.program_header_iterator(@constCast(kernel));
+    while (pheaders.next() catch |err| {
+        log.err("failed to read program header: {any}", .{err});
+        return uefi.Status.Error.CompromisedData;
+    }) |phdr| {
+        if (phdr.p_type == elf.PT_LOAD) {
+            log.debug("loading at offset {x}..+{x}", .{ phdr.p_vaddr, phdr.p_filesz });
+            const off = phdr.p_vaddr - kernel_addr_start;
+            const dest = kmem[off .. off + phdr.p_filesz];
+            @constCast(kernel).reader().readNoEof(dest) catch |err| {
+                log.err("failed to read kernel image: {any}", .{err});
+                return uefi.Status.Error.CompromisedData;
+            };
+        }
+    }
+
+    log.info("blossom successfully loaded", .{});
+
+    return @ptrFromInt(@intFromPtr(kmem) + elf_header.entry);
 }
 
 pub const panic = std.debug.FullPanic(panicFn);

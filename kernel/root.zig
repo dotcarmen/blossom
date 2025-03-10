@@ -8,7 +8,9 @@ pub const std_options = std.Options{
     .logFn = klog.logfn,
 };
 
-pub fn kmain() callconv(.c) void {}
+pub fn kmain() callconv(.c) usize {
+    return 42;
+}
 
 comptime {
     if (builtin.is_test) {
