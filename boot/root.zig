@@ -75,14 +75,15 @@ fn loadOS() uefi.Status.Error!void {
     try boot_services.waitForEvent(1, &events, &idx).err();
 }
 
-const panic = std.debug.FullPanic(panicFn);
+pub const panic = std.debug.FullPanic(panicFn);
 
 fn panicFn(msg: []const u8, stacktrace: ?usize) noreturn {
     printing: {
         const console = uefi.system_table.con_out.?;
         console.outputString(unicode.utf8ToUtf16LeStringLiteral("\r\nbootloader panicked")).err() catch break :printing;
         if (stacktrace) |st| {
-            var stream = std.io.fixedBufferStream([64]u8);
+            var buffer: [64]u8 = undefined;
+            var stream = std.io.fixedBufferStream(buffer[0..]);
             stream.writer().print(" at 0x{x}", .{st}) catch break :printing;
             var buf: [64]u16 = undefined;
             const len = unicode.utf8ToUtf16Le(buf[0..63], stream.getWritten()) catch break :printing;
@@ -90,10 +91,17 @@ fn panicFn(msg: []const u8, stacktrace: ?usize) noreturn {
             console.outputString(buf[0..len :0]).err() catch break :printing;
         }
 
-        console.outputString(":\r\n").err() catch break :printing;
-        console.outputString(msg).err() catch break :printing;
+        console.outputString(unicode.utf8ToUtf16LeStringLiteral(": ")).err() catch break :printing;
+        var buf: [64]u16 = undefined;
+        const len = unicode.utf8ToUtf16Le(buf[0..63], msg) catch break :printing;
+        buf[len] = 0;
+        console.outputString(buf[0..len :0]).err() catch break :printing;
+        console.outputString(unicode.utf8ToUtf16LeStringLiteral("\r\n")).err() catch break :printing;
     }
 
     const boot_services = uefi.system_table.boot_services orelse while (true) {};
-    boot_services.exit(uefi.handle, 2, 0, null);
+    _ = boot_services.exit(uefi.handle, uefi.Status.aborted, 0, null);
+    while (true) {
+        // boot_services.exit should've exited the program
+    }
 }
