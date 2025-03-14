@@ -1,8 +1,6 @@
 const std = @import("std");
 const uefi = std.os.uefi;
 
-pub const ScanCode = struct {};
-
 // https://github.com/ziglang/zig/pull/23147
 pub fn errorToStatus(err: uefi.Status.Error) uefi.Status {
     const Status = uefi.Status;
