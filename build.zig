@@ -92,6 +92,7 @@ fn image_steps(
             .mode = .simple,
             .path = module.root_source_file.?,
         },
+        .zig_lib_dir = zig_lib_dir,
     });
     const test_artifact = b.addInstallArtifact(compile_test, .{
         .dest_dir = .{ .override = image_dir },

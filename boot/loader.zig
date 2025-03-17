@@ -37,13 +37,11 @@ pub fn init(
     self.fs = try boots.openProtocolSt(protocol.SimpleFileSystem, storage_device);
     log.debug("opened dir", .{});
 
-    var vol: *protocol.File = undefined;
-    try self.fs.openVolume(@ptrCast(&vol)).err();
-
+    const vol = try self.fs.openVolume();
     self.kernel_file = try vol.open(
         kernel_path,
-        protocol.File.efi_file_mode_read,
-        protocol.File.efi_file_read_only,
+        .read,
+        .{ .read_only = true },
     );
     log.info("loaded kernel file", .{});
 

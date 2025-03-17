@@ -54,26 +54,25 @@ fn panicFn(msg: []const u8, stacktrace: ?usize) noreturn {
     printing: {
         const console = uefi.system_table.con_out orelse
             break :printing;
-        _ = console.setAttribute(uefi.protocol.SimpleTextOutput.red);
-        defer _ = console.setAttribute(uefi.protocol.SimpleTextOutput.white);
-        _ = console.outputString(utf16("\r\nbootloader panic"));
+        _ = console.setAttribute(.{ .foreground = .red }) catch break :printing;
+        defer _ = console.setAttribute(.{ .foreground = .white }) catch {};
+        _ = console.outputString(utf16("\r\nbootloader panic")) catch break :printing;
 
         if (stacktrace) |st| {
-            _ = console.outputString(utf16(" at 0x"));
+            _ = console.outputString(utf16(" at 0x")) catch break :printing;
             var utf8_buf: [BUFFER_LEN]u8 = undefined;
             // assume the whole address is written, because why wouldn't it?
             const utf8_len = std.fmt.formatIntBuf(&utf8_buf, st, 16, .upper, .{});
             const len = convertUtf16(&buf, utf8_buf[0..utf8_len]) catch unreachable;
             buf[len] = 0;
-            _ = console.outputString(buf[0..len :0]);
+            _ = console.outputString(buf[0..len :0]) catch break :printing;
         }
 
-        _ = console.outputString(utf16(": "));
+        _ = console.outputString(utf16(": ")) catch break :printing;
         const len = convertUtf16(buf[0 .. BUFFER_LEN - 1], msg) catch unreachable;
         buf[len] = 0;
-        _ = console.outputString(buf[0..len :0]);
-
-        _ = console.outputString(utf16("\r\n"));
+        _ = console.outputString(buf[0..len :0]) catch break :printing;
+        _ = console.outputString(utf16("\r\n")) catch break :printing;
     }
 
     const boot_services = uefi.system_table.boot_services orelse while (true) {};
