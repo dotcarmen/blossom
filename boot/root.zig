@@ -3,86 +3,126 @@ const std = @import("std");
 const elf = std.elf;
 const log = std.log;
 const uefi = std.os.uefi;
+const protocol = uefi.protocol;
 const utf16 = std.unicode.utf8ToUtf16LeStringLiteral;
 
-const Loader = @import("loader.zig");
-const uefilib = @import("uefilib.zig");
 const logging = @import("logging.zig");
 
 pub const std_options = std.Options{
     .logFn = logging.logFn,
 };
 
-pub fn main() uefi.Status {
-    mainImpl() catch |err| {
-        log.err("error loading blossom: {any}", .{err});
-        if (err == error.Unexpected) return .aborted;
-        return uefilib.errorToStatus(@errorCast(err));
-    };
-
-    return .success;
-}
-
-fn mainImpl() (uefi.UnexpectedError || uefi.Status.Error)!void {
+pub fn main() (uefi.UnexpectedError || uefi.Error)!void {
     log.info("hello, world!", .{});
-    const boots = uefi.system_table.boot_services orelse {
-        log.err("boot services unavailable", .{});
-        return uefi.Status.Error.AlreadyStarted;
+    const boots = uefi.system_table.boot_services.?;
+
+    const loader_image = try boots.handleProtocol(
+        protocol.LoadedImage,
+        uefi.handle,
+    ) orelse unreachable;
+    log.debug("found loader image", .{});
+
+    const storage_device = loader_image.device_handle orelse
+        return error.NotFound;
+
+    const fs = try boots.handleProtocol(
+        protocol.SimpleFileSystem,
+        storage_device,
+    ) orelse unreachable;
+    log.debug("opened fs", .{});
+
+    const vol = try fs.openVolume();
+    const kernel_file = try vol.open(utf16("efi\\boot\\blossomk"), .read, .{});
+    log.info("loaded kernel file", .{});
+
+    const elf_header = elf.Header.read(kernel_file) catch |err| {
+        log.err("failed to read elf header: {!}", .{err});
+        return error.CompromisedData;
     };
-    var loader = try Loader.init(boots, utf16("efi\\boot\\blossomk"));
-    try loader.load();
+    std.debug.assert(elf_header.is_64);
 
-    log.info("kernel successfully loaded, exiting boot services", .{});
-    _ = boots.exitBootServices(uefi.handle, 123);
+    var pheaders = elf_header.program_header_iterator(kernel_file);
 
-    const entry: *const fn () callconv(.c) usize = @ptrFromInt(loader.entry_addr());
-    log.info("entering kernel at {X}", .{entry});
+    var kernel_addr_start: usize = std.math.maxInt(u64);
+    var kernel_addr_end: usize = 0;
+    while (try nextPHeader(&pheaders)) |phdr| {
+        if (phdr.p_type != .LOAD) continue;
+        log.debug("load kernel segment: vaddr=0x{X} memsz=0x{X}", .{
+            phdr.p_vaddr, phdr.p_memsz,
+        });
+        kernel_addr_start = @min(kernel_addr_start, phdr.p_vaddr);
+        kernel_addr_end = @max(kernel_addr_end, phdr.p_vaddr + phdr.p_memsz);
+    }
+
+    const page_size = @sizeOf(uefi.Page);
+    const num_kernel_pages = (kernel_addr_end - kernel_addr_start + page_size - 1) / page_size;
+    log.debug(
+        "allocating {d} pages for kernel addrs 0x{X}-{X}",
+        .{ num_kernel_pages, kernel_addr_start, kernel_addr_end },
+    );
+
+    const kernel_pages = try boots.allocatePages(
+        .allocate_any_pages,
+        .loader_data,
+        num_kernel_pages,
+    );
+    for (kernel_pages) |*page|
+        @memset(page[0..], 0);
+
+    var kernel_memory = @as([*]align(4096) u8, @ptrCast(kernel_pages.ptr))[0 .. num_kernel_pages * page_size];
+    pheaders.index = 0;
+    while (try nextPHeader(&pheaders)) |phdr| {
+        switch (phdr.p_type) {
+            .LOAD => {
+                const off = phdr.p_vaddr - kernel_addr_start;
+                const dest = kernel_memory[off .. off + phdr.p_filesz];
+                try kernel_file.setPosition(phdr.p_offset);
+                kernel_file.reader().readNoEof(dest) catch |err| {
+                    log.err("failed to read kernel file: {!}", .{err});
+                    return errorUnionFallback(uefi.Error, err, error.Aborted);
+                };
+            },
+
+            else => {},
+        }
+    }
+
+    log.info("kernel loaded", .{});
+    const mmap = try boots.getMemoryMapInfo();
+    log.info("mmap key: {d}", .{@intFromEnum(mmap.key)});
+    try boots.exitBootServices(uefi.handle, mmap.key);
+    log.info("exited boot services", .{});
+    const entry: *const fn () callconv(.c) usize = @ptrFromInt(@as(usize, @truncate(elf_header.entry)));
+    log.info("entering kernel at 0x{X}", .{entry});
     const res = entry();
     log.info("kernel returned {d}", .{res});
 }
 
-pub const panic = std.debug.FullPanic(panicFn);
+fn nextPHeader(
+    pheaders: *elf.ProgramHeaderIterator(*protocol.File),
+) !?elf.elf64.Phdr {
+    return pheaders.next() catch |err| {
+        log.err("failed to read pheader: {!}", .{err});
+        return errorUnionFallback(uefi.Error, err, error.Aborted);
+    };
+}
 
-fn panicFn(msg: []const u8, stacktrace: ?usize) noreturn {
-    @branchHint(.cold);
+fn errorUnionFallback(
+    ErrorSet: type,
+    err: anyerror,
+    fallback: ErrorSet,
+) ErrorSet {
+    if (isErrorUnion(ErrorSet, err))
+        return @errorCast(err);
+    return fallback;
+}
 
-    const BUFFER_LEN = 64;
-    const convertUtf16 = std.unicode.utf8ToUtf16Le;
+fn isErrorUnion(ErrorSet: type, err: anyerror) bool {
+    const errors = @typeInfo(ErrorSet).error_set orelse
+        return false;
+    inline for (errors) |set_error|
+        if (std.mem.eql(u8, @errorName(err), set_error.name))
+            return true;
 
-    var buf: [BUFFER_LEN]u16 = undefined;
-
-    printing: {
-        const console = uefi.system_table.con_out orelse
-            break :printing;
-        _ = console.setAttribute(.{ .foreground = .red }) catch break :printing;
-        defer _ = console.setAttribute(.{ .foreground = .white }) catch {};
-        _ = console.outputString(utf16("\r\nbootloader panic")) catch break :printing;
-
-        if (stacktrace) |st| {
-            _ = console.outputString(utf16(" at 0x")) catch break :printing;
-            var utf8_buf: [BUFFER_LEN]u8 = undefined;
-            // assume the whole address is written, because why wouldn't it?
-            const utf8_len = std.fmt.formatIntBuf(&utf8_buf, st, 16, .upper, .{});
-            const len = convertUtf16(&buf, utf8_buf[0..utf8_len]) catch unreachable;
-            buf[len] = 0;
-            _ = console.outputString(buf[0..len :0]) catch break :printing;
-        }
-
-        _ = console.outputString(utf16(": ")) catch break :printing;
-        const len = convertUtf16(buf[0 .. BUFFER_LEN - 1], msg) catch unreachable;
-        buf[len] = 0;
-        _ = console.outputString(buf[0..len :0]) catch break :printing;
-        _ = console.outputString(utf16("\r\n")) catch break :printing;
-    }
-
-    const boot_services = uefi.system_table.boot_services orelse while (true) {};
-    _ = boot_services.exit(
-        uefi.handle,
-        uefi.Status.aborted,
-        0,
-        null,
-    );
-    while (true) {
-        // boot_services.exit should've exited the program
-    }
+    return false;
 }
