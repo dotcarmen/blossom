@@ -20,7 +20,7 @@ pub fn main() (uefi.UnexpectedError || uefi.Error)!void {
         protocol.LoadedImage,
         uefi.handle,
     ) orelse unreachable;
-    log.debug("found loader image", .{});
+    // log.debug("found loader image at 0x{X}", .{@intFromPtr(loader_image.image_base)});
 
     const storage_device = loader_image.device_handle orelse
         return error.NotFound;
@@ -88,11 +88,20 @@ pub fn main() (uefi.UnexpectedError || uefi.Error)!void {
     }
 
     log.info("kernel loaded", .{});
-    const mmap = try boots.getMemoryMapInfo();
-    log.info("mmap key: {d}", .{@intFromEnum(mmap.key)});
-    try boots.exitBootServices(uefi.handle, mmap.key);
+    // const mmap = try boots.getMemoryMapInfo();
+    // log.info("mmap key: {d}", .{@intFromEnum(mmap.key)});
+    // try boots.exitBootServices(uefi.handle, mmap.key);
+    boots.exitBootServices(uefi.handle, @enumFromInt(123)) catch |err|
+        switch (err) {
+            error.InvalidParameter => {
+                log.debug("ignoring invalid parameter to exitBootServices", .{});
+            },
+            else => return err,
+        };
+
     log.info("exited boot services", .{});
-    const entry: *const fn () callconv(.c) usize = @ptrFromInt(@as(usize, @truncate(elf_header.entry)));
+    const entry_addr = kernel_memory.ptr[elf_header.entry - kernel_addr_start ..];
+    const entry: *const fn () callconv(.c) usize = @ptrCast(@alignCast(entry_addr));
     log.info("entering kernel at 0x{X}", .{entry});
     const res = entry();
     log.info("kernel returned {d}", .{res});
