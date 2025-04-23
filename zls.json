@@ -1,0 +1,4 @@
+{
+  "$schema": "https://raw.githubusercontent.com/zigtools/zls/refs/heads/master/schema.json",
+  "zig_lib_path": "./zig/lib"
+}

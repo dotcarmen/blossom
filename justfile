@@ -1,6 +1,10 @@
+_default:
+    @just --list
+
 alias r := run
+
+[macos]
 run target='install' *FLAGS: (build target) vars-file
-	# TODO: won't work on non-macos
 	qemu-system-aarch64 -accel hvf \
 		-m 2048 -cpu cortex-a72 -M virt \
 		-drive file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd,if=pflash,format=raw,readonly=on \
@@ -9,7 +13,7 @@ run target='install' *FLAGS: (build target) vars-file
 		-nographic {{FLAGS}}
 
 alias b := build
-build target='install':
+build target='install': update-zig
 	zig build {{target}}
 
 vars-file:
@@ -17,6 +21,6 @@ vars-file:
 	touch vars.fd
 	truncate -s 64M vars.fd
 
-# debug:
-#     #/usr/bin/env bash
-#     just run -gdb tcp::1234 -S
+[working-directory('zig')]
+update-zig:
+    git pull --force

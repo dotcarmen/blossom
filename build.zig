@@ -1,18 +1,27 @@
 const std = @import("std");
 const Step = std.Build.Step;
 
+const parseTargetQuery = std.Build.parseTargetQuery;
+
 const image_dir = std.Build.InstallDir{
     .custom = "efi/boot",
 };
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
-    _ = b.step("test", "build image with tests");
+    const arch = b.option(
+        []const u8,
+        "arch",
+        "the target architecture to build for",
+    ) orelse "native";
+    const mcpu = b.option(
+        []const u8,
+        "cpu",
+        "Target CPU features to add or subtract",
+    );
 
-    const home = std.process.getEnvVarOwned(b.allocator, "HOME") catch |err| {
-        std.log.err("error getting HOME: {any}", .{err});
-        return;
-    };
+    const install_step = b.getInstallStep();
+    const test_step = b.step("test", "build image with tests");
 
     var opts = b.addOptions();
     opts.addOption(
@@ -26,46 +35,42 @@ pub fn build(b: *std.Build) void {
     );
     const opts_mod = opts.createModule();
 
-    const zig_repo = blk: {
-        const p = std.fs.path.join(b.allocator, &.{
-            home,
-            "github.com/ziglang/zig/lib",
-        }) catch |err| {
-            std.log.err("error joining path: {any}", .{err});
-            return;
-        };
-        break :blk std.Build.LazyPath{
-            .cwd_relative = p,
-        };
-    };
+    const zig_lib_dir = b.path("zig/lib");
 
-    const kernel_target = b.resolveTargetQuery(.{
-        .cpu_arch = .aarch64,
-        .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a72 },
-        .os_tag = .freestanding,
+    const kernel_target = try parseTargetQuery(.{
+        .arch_os_abi = b.fmt("{s}-freestanding-none", .{arch}),
+        .cpu_features = mcpu,
     });
     const kernel = b.createModule(.{
         .root_source_file = b.path("kernel/root.zig"),
         .code_model = .small,
         .optimize = optimize,
-        .target = kernel_target,
+        .unwind_tables = .none,
+        .target = b.resolveTargetQuery(kernel_target),
     });
-    kernel.addImport("options", opts_mod);
-    image_steps(b, kernel, "blossomk", zig_repo);
+    kernel.addImport("$kernel", kernel);
+    kernel.addImport("$options", opts_mod);
+    image_steps(b, kernel, "blossomk", zig_lib_dir, .{
+        .linker_script = b.path("kernel.ld"),
+        .install_step = install_step,
+        .test_step = test_step,
+    });
 
-    const boot_target = b.resolveTargetQuery(.{
-        .cpu_arch = .aarch64,
-        .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a72 },
-        .os_tag = .uefi,
+    const bootloader_target = try parseTargetQuery(.{
+        .arch_os_abi = b.fmt("{s}-uefi-none", .{arch}),
+        .cpu_features = mcpu,
     });
     const bootloader = b.createModule(.{
         .root_source_file = b.path("boot/root.zig"),
         .code_model = .small,
         .optimize = optimize,
-        .target = boot_target,
+        .target = b.resolveTargetQuery(bootloader_target),
     });
-    bootloader.addImport("options", opts_mod);
-    image_steps(b, bootloader, "BOOTAA64", zig_repo);
+    bootloader.addImport("$kernel", kernel);
+    image_steps(b, bootloader, "BOOTAA64", zig_lib_dir, .{
+        .install_step = install_step,
+        .test_step = test_step,
+    });
 }
 
 fn image_steps(
@@ -73,6 +78,11 @@ fn image_steps(
     module: *std.Build.Module,
     name: []const u8,
     zig_lib_dir: ?std.Build.LazyPath,
+    opts: struct {
+        linker_script: ?std.Build.LazyPath = null,
+        install_step: *Step,
+        test_step: *Step,
+    },
 ) void {
     const compile_exe = b.addExecutable(.{
         .name = name,
@@ -83,7 +93,7 @@ fn image_steps(
     const exe_artifact = b.addInstallArtifact(compile_exe, .{
         .dest_dir = .{ .override = image_dir },
     });
-    b.getInstallStep().dependOn(&exe_artifact.step);
+    opts.install_step.dependOn(&exe_artifact.step);
 
     const compile_test = b.addTest(.{
         .name = name,
@@ -97,5 +107,10 @@ fn image_steps(
     const test_artifact = b.addInstallArtifact(compile_test, .{
         .dest_dir = .{ .override = image_dir },
     });
-    b.top_level_steps.get("test").?.step.dependOn(&test_artifact.step);
+    opts.test_step.dependOn(&test_artifact.step);
+
+    if (opts.linker_script) |s| {
+        compile_exe.setLinkerScript(s);
+        compile_test.setLinkerScript(s);
+    }
 }
