@@ -1,0 +1,13 @@
+.{
+    .name = .blossom,
+    .version = "0.0.0",
+    .fingerprint = 0x1b4a1ef9740a6c6e, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.0-dev.1084+dbe0e0c1b",
+    .dependencies = .{
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
