@@ -16,23 +16,26 @@ pub fn build(b: *std.Build) void {
         .preferred_optimize_mode = .ReleaseFast,
     });
 
-    const blossomk = b.addModule("blossomk", .{
-        .code_model = .kernel,
+    const limine_zig = b.dependency("limine", .{
+        .api_revision = 3,
+    });
+
+    const blossom = b.addModule("blossom", .{
         .root_source_file = b.path(b.pathJoin(&.{ "src", "root.zig" })),
         .optimize = optimize,
         .target = target,
         .link_libc = false,
         .unwind_tables = .none,
     });
+    blossom.addImport("limine", limine_zig.module("limine"));
 
-    const blossomk_exe = b.addExecutable(.{
-        .name = "blossom",
-        .root_module = blossomk,
+    const blossom_exe = b.addExecutable(.{
+        .name = b.fmt("blossom-{t}.elf", .{target.result.cpu.arch}),
+        .root_module = blossom,
         .linkage = .static,
     });
-    blossomk_exe.setLinkerScript(b.path("kernel.ld"));
-
-    b.installArtifact(blossomk_exe);
+    blossom_exe.setLinkerScript(b.path("kernel.ld"));
+    b.installArtifact(blossom_exe);
 
     // const run_step = b.step("run", "Run the app");
 

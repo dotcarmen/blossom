@@ -1,24 +1,42 @@
 ENTRY(_start)
 
+PHDRS {
+  limine_requests PT_LOAD;
+  text PT_LOAD;
+  rodata PT_LOAD;
+  data PT_LOAD;
+}
+
 SECTIONS {
-    . = 2M;
+    . = 0xFFFFFFFF80000000;
 
-    .text : ALIGN(4K) {
-        /* We need to specify KEEP to prevent the linker from garbage-collecting the multiboot section. */
-        KEEP(*(.multiboot))
-        *(.text)
-    }
+    .limine_requests : {
+        KEEP(*(.limine_requests_start))
+        KEEP(*(.limine_requests))
+        KEEP(*(.limine_requests_end))
+    } : limine_requests
 
-    .rodata : ALIGN(4K) {
-        *(.rodata)
-    }
+    .text : ALIGN(CONSTANT(MAXPAGESIZE)) {
+        *(.text .text.*)
+    } : text
 
-    .data : ALIGN(4K) {
-        *(.data)
-    }
+    .rodata : ALIGN(CONSTANT(MAXPAGESIZE)) {
+        *(.rodata .rodata.*)
+    } : rodata
 
-    .bss : ALIGN(4K) {
+    .data : ALIGN(CONSTANT(MAXPAGESIZE)) {
+        *(.data .data.*)
+    } : data
+
+    /* bss needs to be the last thing mapped to data phdr */
+    .bss : ALIGN(CONSTANT(MAXPAGESIZE)) {
+        *(.bss .bss.*)
         *(COMMON)
-        *(.bss)
+    } : data
+
+    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
+    /DISCARD/ : {
+        *(.eh_frame*)
+        *(.note .note.*)
     }
 }

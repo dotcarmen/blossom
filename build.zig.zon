@@ -4,6 +4,10 @@
     .fingerprint = 0x1b4a1ef9740a6c6e, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.0-dev.1084+dbe0e0c1b",
     .dependencies = .{
+        .limine = .{
+            .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#a4b4268a55212a0528708f857d679feda1ee64f6",
+            .hash = "limine-0.0.0-ZIJY--V6AACTQb1wVUvvvsi52K1X5cJe2KD0BSDb5Lv3",
+        },
     },
     .paths = .{
         "build.zig",
