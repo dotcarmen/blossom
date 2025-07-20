@@ -5,13 +5,14 @@
     .minimum_zig_version = "0.15.0-dev.1084+dbe0e0c1b",
     .dependencies = .{
         .limine = .{
-            .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#a4b4268a55212a0528708f857d679feda1ee64f6",
-            .hash = "limine-0.0.0-ZIJY--V6AACTQb1wVUvvvsi52K1X5cJe2KD0BSDb5Lv3",
+            .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#9155d2b11abcdb679e13fb6cc7803d82ff3988f4",
+            .hash = "limine-9.5.0-ZIJY-xx_AACFW4TXpOtU8dkGZTUPIhcTKx6Y4VJ4sbhA",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "kernel.ld",
         "src",
     },
 }

@@ -1,4 +1,6 @@
-export fn _start() void {}
+export fn _start() void {
+    
+}
 
 // const MAX_STACK_SIZE = 1024 * 1024;
 
