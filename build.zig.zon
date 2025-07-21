@@ -8,6 +8,10 @@
             .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#9155d2b11abcdb679e13fb6cc7803d82ff3988f4",
             .hash = "limine-9.5.0-ZIJY-xx_AACFW4TXpOtU8dkGZTUPIhcTKx6Y4VJ4sbhA",
         },
+        .edk2_ovmf_nightly = .{
+            .url = "https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-2025-07-20/edk2-ovmf.tar.xz",
+            .hash = "N-V-__8AAAAAVAEHMxZm6OcYS0aa3iFly6kGjSQjYX5qTUds",
+        },
     },
     .paths = .{
         "build.zig",

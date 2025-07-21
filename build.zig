@@ -1,4 +1,5 @@
 const std = @import("std");
+const Build = std.Build;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{
@@ -8,7 +9,7 @@ pub fn build(b: *std.Build) void {
             .os_tag = .freestanding,
         },
         .whitelist = &.{
-            .{ .abi = .none, .ofmt = .elf, .os_tag = .freestanding },
+            .{ .cpu_arch = .aarch64, .abi = .none, .ofmt = .elf, .os_tag = .freestanding },
         },
     });
 
@@ -87,45 +88,58 @@ pub fn build(b: *std.Build) void {
 
     build_iso.addDirectoryArg(iso_root_dir);
     build_iso.addArg("-o");
-    const blossom_iso = build_iso.addOutputFileArg("blossom.iso");
+    const base_blossom_iso = build_iso.addOutputFileArg("blossom.iso");
 
     // limine bios-install image.iso
     const limine_bios_install = std.Build.Step.Run.create(b, "run limine bios-install");
     limine_bios_install.addFileArg(limine.artifact("limine").getEmittedBin());
     limine_bios_install.addArg("bios-install");
-    limine_bios_install.addFileArg(blossom_iso);
-    limine_bios_install.has_side_effects = true;
+    const blossom_iso = limine_bios_install.addModifyPathArg(base_blossom_iso);
 
-    b.getInstallStep().dependOn(install_blossom_iso: {
-        const install_step = b.addInstallFile(blossom_iso, "blossom.iso");
-        install_step.step.dependOn(&limine_bios_install.step);
-        break :install_blossom_iso &install_step.step;
-    });
+    const install_blossom_iso = b.addInstallFile(blossom_iso, "blossom.iso");
+    b.getInstallStep().dependOn(&install_blossom_iso.step);
 
-    // const run_step = b.step("run", "Run the app");
+    const run_qemu_uefi = b.addSystemCommand(
+        switch (target.result.cpu.arch) {
+            .aarch64 => &.{
+                "qemu-system-aarch64", "-M",
+                "virt",                "-cpu",
+                "cortex-a72",          "-device",
+                "ramfb",               "-device",
+                "qemu-xhci",           "-device",
+                "usb-kbd",             "-device",
+                "usb-mouse",
+            },
+            else => unreachable,
+        },
+    );
 
-    // const run_cmd = b.addRunArtifact(exe);
-    // run_step.dependOn(&run_cmd.step);
+    run_qemu_uefi.addArgs(
+        b.option(
+            []const []const u8,
+            "qemu_opt",
+            "Additional options for QEMU",
+        ) orelse &.{ "-m", "2G" },
+    );
 
-    // run_cmd.step.dependOn(b.getInstallStep());
+    const ovmf = b.dependency("edk2_ovmf_nightly", .{});
+    run_qemu_uefi.addArg("-drive");
+    run_qemu_uefi.addPrefixedFileArg(
+        "if=pflash,unit=0,readonly=on,format=raw,file=",
+        ovmf_code_fd: switch (target.result.cpu.arch) {
+            .aarch64 => {
+                const workdir = b.addWriteFiles();
+                const copied_ovmf_code_fd = workdir.addCopyFile(ovmf.path("ovmf-code-aarch64.fd"), "ovmf-code-aarch64.fd");
+                const run_truncate = b.addSystemCommand(&.{ "truncate", "-c", "-s", "64M" });
+                break :ovmf_code_fd run_truncate.addModifyPathArg(copied_ovmf_code_fd);
+            },
+            else => unreachable,
+        },
+    );
 
-    // if (b.args) |args| {
-    //     run_cmd.addArgs(args);
-    // }
+    run_qemu_uefi.addArg("-cdrom");
+    run_qemu_uefi.addFileArg(blossom_iso);
 
-    // const mod_tests = b.addTest(.{
-    //     .root_module = mod,
-    // });
-
-    // const run_mod_tests = b.addRunArtifact(mod_tests);
-
-    // const exe_tests = b.addTest(.{
-    //     .root_module = exe.root_module,
-    // });
-
-    // const run_exe_tests = b.addRunArtifact(exe_tests);
-
-    // const test_step = b.step("test", "Run tests");
-    // test_step.dependOn(&run_mod_tests.step);
-    // test_step.dependOn(&run_exe_tests.step);
+    b.step("run-uefi", "Run BlossomOS with UEFI on qemu")
+        .dependOn(&run_qemu_uefi.step);
 }
