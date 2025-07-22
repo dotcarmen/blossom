@@ -19,6 +19,8 @@ pub fn build(b: *std.Build) void {
 
     const limine = b.dependency("limine", .{
         .api_revision = 3,
+        .target = @as([]const u8, target.result.zigTriple(b.allocator) catch @panic("OOM")),
+        .optimize = @as(std.builtin.OptimizeMode, if (optimize == .Debug) .ReleaseSafe else .ReleaseFast),
     });
 
     const blossom = b.addModule("blossom", .{
