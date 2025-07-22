@@ -1,58 +1,39 @@
+const limine = @import("limine");
+
+const requests = struct {
+    export var __start_marker: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
+    export var __end_marker: limine.RequestsEndMarker linksection(".limine_requests_end") = .{};
+
+    export var base_revision: limine.BaseRevision linksection(".limine_requests") = .{};
+    export var framebuffer: limine.FramebufferRequest linksection(".limine_requests") = .{};
+};
+
 export fn _start() void {
-    
+    if (!requests.base_revision.isSupported()) {
+        @panic("limine revision not supported");
+    }
+
+    if (requests.framebuffer.response) |framebuffer_response| {
+        const framebuffer = framebuffer_response.getFramebuffers()[0];
+        for (0..100) |i| {
+            const fb_ptr: [*]volatile u32 = @ptrCast(@alignCast(framebuffer.address));
+            fb_ptr[i * (framebuffer.pitch / 4) + i] = 0xff0000;
+        }
+    } else {
+        @panic("Framebuffer response not present");
+    }
+
+    hcf();
 }
 
-// const MAX_STACK_SIZE = 1024 * 1024;
-
-// pub const Console = @import("Console.zig");
-
-// const builtin = @import("builtin");
-
-// const std = @import("std");
-
-// const MultibootHeader = extern struct {
-//     pub const MAGIC: u32 = 0xE85250D6;
-
-//     comptime {
-//         std.debug.assert(std.mem.Alignment.of(MultibootHeader) == .@"4");
-//     }
-
-//     magic: u32 align(4) = MAGIC,
-//     flags: u32,
-//     checksum: i32,
-//     padding: u32 = 0,
-
-//     pub const Flags = packed struct(u32) {
-//         /// align loaded modules on page boundaries
-//         @"align": bool = false,
-//         /// provide memory map
-//         meminfo: bool = false,
-//         _pad: u30 = 0,
-//     };
-// };
-
-// export var stack_bytes: [MAX_STACK_SIZE]u8 = undefined;
-
-// export fn _start() callconv(.naked) noreturn {
-//     asm volatile (switch (builtin.cpu.arch) {
-//             .aarch64 =>
-//             \\ ldr x30, =%[stack_top]
-//             \\ mov sp, x30
-//             \\ bl %[kmain]
-//             \\ b .
-//             ,
-//             inline else => |arch| @compileError("unsupported architecture " ++ @tagName(arch)),
-//         }
-//         :
-//         : [stack_top] "i" (stack_top: {
-//             const stack_ptr: [*]align(16) u8 = &stack_bytes;
-//             const stack_top: [*]align(16) u8 = stack_ptr + MAX_STACK_SIZE;
-//             break :stack_top stack_top;
-//           }),
-//           [kmain] "X" (&kmain),
-//     );
-// }
-
-// fn kmain() void {
-//     Console.print("hello, world!", .{}) catch unreachable;
-// }
+fn hcf() void {
+    while (true) {
+        switch (@import("builtin").cpu.arch) {
+            .x86_64 => asm volatile ("hlt"),
+            .aarch64 => asm volatile ("wfi"),
+            .riscv64 => asm volatile ("wfi"),
+            .loongarch64 => asm volatile ("idle 0"),
+            else => unreachable,
+        }
+    }
+}

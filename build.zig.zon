@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.15.0-dev.1084+dbe0e0c1b",
     .dependencies = .{
         .limine = .{
-            .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#9155d2b11abcdb679e13fb6cc7803d82ff3988f4",
-            .hash = "limine-9.5.0-ZIJY-xx_AACFW4TXpOtU8dkGZTUPIhcTKx6Y4VJ4sbhA",
+            .url = "git+https://github.com/dotcarmen/limine-zig?ref=dev#c90d6cd537950d295538fc913372c26783cc0ee2",
+            .hash = "limine-9.5.0-ZIJY-6JhAADQk_9gJWVTob3Hqf76Eg9fm_Jsiihd1Mac",
         },
         .edk2_ovmf_nightly = .{
             .url = "https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-2025-07-20/edk2-ovmf.tar.xz",
