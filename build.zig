@@ -17,6 +17,12 @@ pub fn build(b: *std.Build) void {
         .preferred_optimize_mode = .ReleaseFast,
     });
 
+    const otf = b.addModule("otf", .{
+        .root_source_file = b.path(b.pathJoin(&.{ "otf", "root.zig" })),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const limine = b.dependency("limine", .{
         .api_revision = 3,
         .target = @as([]const u8, target.result.zigTriple(b.allocator) catch @panic("OOM")),
@@ -31,6 +37,7 @@ pub fn build(b: *std.Build) void {
         .unwind_tables = .none,
     });
     blossom.addImport("limine", limine.module("limine"));
+    blossom.addImport("otf", otf);
 
     const blossom_exe = b.addExecutable(.{
         .name = "blossom.elf",
@@ -144,4 +151,18 @@ pub fn build(b: *std.Build) void {
 
     b.step("run-uefi", "Run BlossomOS with UEFI on qemu")
         .dependOn(&run_qemu_uefi.step);
+
+    const test_otf = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.pathJoin(&.{ "otf", "root.zig" })),
+            .optimize = .Debug,
+            .target = b.resolveTargetQuery(.{}),
+        }),
+        .name = "otf_test",
+    });
+
+    const run_test_otf = b.addRunArtifact(test_otf);
+
+    const test_step = b.step("test", "run tests");
+    test_step.dependOn(&run_test_otf.step);
 }
