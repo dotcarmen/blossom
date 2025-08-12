@@ -100,7 +100,7 @@ pub fn build(b: *std.Build) void {
     const base_blossom_iso = build_iso.addOutputFileArg("blossom.iso");
 
     // limine bios-install image.iso
-    const limine_bios_install = std.Build.Step.Run.create(b, "run limine bios-install");
+    const limine_bios_install: *std.Build.Step.Run = .create(b, "run limine bios-install");
     limine_bios_install.addFileArg(limine.artifact("limine").getEmittedBin());
     limine_bios_install.addArg("bios-install");
     const blossom_iso = limine_bios_install.addModifyPathArg(base_blossom_iso);
@@ -166,3 +166,5 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "run tests");
     test_step.dependOn(&run_test_otf.step);
 }
+
+const LimineBiosInstall = struct {};
