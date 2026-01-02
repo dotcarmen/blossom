@@ -1,5 +1,6 @@
 const std = @import("std");
 const Build = std.Build;
+const Step = std.Build.Step;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{
@@ -98,12 +99,11 @@ pub fn build(b: *std.Build) void {
     build_iso.addDirectoryArg(iso_root_dir);
     build_iso.addArg("-o");
     const base_blossom_iso = build_iso.addOutputFileArg("blossom.iso");
+    build_iso.addCheck(.{ .expect_stderr_match = "ISO image produced:" });
 
     // limine bios-install image.iso
-    const limine_bios_install: *std.Build.Step.Run = .create(b, "run limine bios-install");
-    limine_bios_install.addFileArg(limine.artifact("limine").getEmittedBin());
-    limine_bios_install.addArg("bios-install");
-    const blossom_iso = limine_bios_install.addModifyPathArg(base_blossom_iso);
+    const limine_bios_install = LimineBiosInstall.create(b, limine, base_blossom_iso);
+    const blossom_iso = limine_bios_install.getEmittedIso();
 
     const install_blossom_iso = b.addInstallFile(blossom_iso, "blossom.iso");
     b.getInstallStep().dependOn(&install_blossom_iso.step);
@@ -137,10 +137,8 @@ pub fn build(b: *std.Build) void {
         "if=pflash,unit=0,readonly=on,format=raw,file=",
         ovmf_code_fd: switch (target.result.cpu.arch) {
             .aarch64 => {
-                const workdir = b.addWriteFiles();
-                const copied_ovmf_code_fd = workdir.addCopyFile(ovmf.path("ovmf-code-aarch64.fd"), "ovmf-code-aarch64.fd");
-                const run_truncate = b.addSystemCommand(&.{ "truncate", "-c", "-s", "64M" });
-                break :ovmf_code_fd run_truncate.addModifyPathArg(copied_ovmf_code_fd);
+                const trunc = Truncate.create(b, "64M", ovmf.path("ovmf-code-aarch64.fd"));
+                break :ovmf_code_fd trunc.getTruncatedFile();
             },
             else => unreachable,
         },
@@ -167,4 +165,186 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_test_otf.step);
 }
 
-const LimineBiosInstall = struct {};
+// TODO: https://codeberg.org/ziglang/zig/issues/30658#issuecomment-9490664
+pub const LimineBiosInstall = struct {
+    pub const base_id: Step.Id = .custom;
+
+    step: Step,
+    cli: Build.LazyPath,
+    iso: Build.LazyPath,
+    output: Build.GeneratedFile,
+
+    pub fn create(b: *Build, limine: *Build.Dependency, iso: Build.LazyPath) *LimineBiosInstall {
+        const cli = limine.artifact("limine").getEmittedBin();
+
+        const lbi = b.allocator.create(LimineBiosInstall) catch @panic("OOM");
+        lbi.* = .{
+            .step = .init(.{
+                .id = base_id,
+                .name = "limine bios-install",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .cli = cli,
+            .iso = iso,
+            .output = .{ .step = &lbi.step },
+        };
+        iso.addStepDependencies(&lbi.step);
+        cli.addStepDependencies(&lbi.step);
+
+        return lbi;
+    }
+
+    pub fn getEmittedIso(lbi: *LimineBiosInstall) Build.LazyPath {
+        return .{ .generated = .{ .file = &lbi.output } };
+    }
+
+    fn make(step: *Step, opts: Step.MakeOptions) !void {
+        const lbi = step.cast(LimineBiosInstall).?;
+        const gpa = step.owner.allocator;
+
+        try step.addWatchInput(lbi.iso);
+
+        var man = step.owner.graph.cache.obtain();
+        defer man.deinit();
+
+        const source_iso = lbi.iso.getPath3(step.owner, step);
+        _ = try man.addFilePath(source_iso, null);
+
+        const cache_hit = try step.cacheHit(&man);
+        const digest = man.final();
+        const output_file_path = step.owner.pathJoin(&.{ "iso", &digest, source_iso.basename() });
+        const output_file_cache_path = try step.owner.cache_root.join(gpa, &.{output_file_path});
+
+        lbi.output.path = output_file_cache_path;
+        if (cache_hit) return;
+
+        _ = try std.Io.Dir.cwd().updateFile(
+            step.owner.graph.io,
+            try source_iso.toString(gpa),
+            step.owner.cache_root.handle.adaptToNewApi(),
+            output_file_path,
+            .{},
+        );
+
+        var argv: [3][]const u8 = .{
+            try lbi.cli.getPath3(step.owner, step).toString(gpa),
+            "bios-install",
+            output_file_cache_path,
+        };
+
+        try step.handleChildProcUnsupported();
+        step.result_failed_command = try Step.allocPrintCmd(gpa, null, &argv);
+        try Step.handleVerbose(step.owner, null, &argv);
+
+        var proc: std.process.Child = .init(&argv, gpa);
+        proc.stdin_behavior = .Pipe;
+        proc.stderr_behavior = .Pipe;
+        proc.stdout_behavior = .Pipe;
+        proc.progress_node = opts.progress_node;
+
+        var stderr: std.ArrayList(u8) = .empty;
+        var stdout: std.ArrayList(u8) = .empty;
+
+        try proc.spawn();
+        errdefer _ = proc.kill() catch {};
+
+        try proc.collectOutput(gpa, &stdout, &stderr, 50 * 1024);
+        const term = try proc.wait();
+        step.handleChildProcessTerm(term) catch |err| {
+            if (stderr.items.len > 0)
+                try step.result_error_msgs.append(gpa, stderr.items);
+            return err;
+        };
+
+        step.result_failed_command = null;
+    }
+};
+
+// TODO: https://codeberg.org/ziglang/zig/issues/30658#issuecomment-9490664
+pub const Truncate = struct {
+    pub const base_id: Step.Id = .custom;
+
+    step: Step,
+    input: Build.LazyPath,
+    size: []const u8,
+    output: Build.GeneratedFile,
+
+    pub fn create(b: *Build, size: []const u8, file: Build.LazyPath) *Truncate {
+        const trunc = b.allocator.create(Truncate) catch @panic("OOM");
+        trunc.* = .{
+            .step = .init(.{
+                .id = base_id,
+                .name = "truncate",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .input = file,
+            .size = size,
+            .output = .{ .step = &trunc.step },
+        };
+        file.addStepDependencies(&trunc.step);
+
+        return trunc;
+    }
+
+    pub fn getTruncatedFile(trunc: *Truncate) Build.LazyPath {
+        return .{ .generated = .{ .file = &trunc.output } };
+    }
+
+    fn make(step: *Step, opts: Step.MakeOptions) !void {
+        const trunc = step.cast(Truncate).?;
+        const gpa = step.owner.allocator;
+
+        try step.addWatchInput(trunc.input);
+
+        var man = step.owner.graph.cache.obtain();
+        defer man.deinit();
+
+        const source_file = trunc.input.getPath3(step.owner, step);
+        _ = try man.addFilePath(source_file, null);
+
+        const cache_hit = try step.cacheHit(&man);
+        const digest = man.final();
+        const output_file_path = step.owner.pathJoin(&.{ "o", &digest, source_file.basename() });
+        const output_file_cache_path = try step.owner.cache_root.join(gpa, &.{output_file_path});
+
+        trunc.output.path = output_file_cache_path;
+        if (cache_hit) return;
+
+        _ = try std.Io.Dir.cwd().updateFile(
+            step.owner.graph.io,
+            try source_file.toString(gpa),
+            step.owner.cache_root.handle.adaptToNewApi(),
+            output_file_path,
+            .{},
+        );
+
+        var argv: [5][]const u8 = .{
+            "truncate", "-c", "-s", trunc.size, try source_file.toString(gpa),
+        };
+
+        try step.handleChildProcUnsupported();
+        step.result_failed_command = try Step.allocPrintCmd(gpa, null, &argv);
+        try Step.handleVerbose(step.owner, null, &argv);
+
+        var proc: std.process.Child = .init(&argv, gpa);
+        proc.stdin_behavior = .Pipe;
+        proc.stderr_behavior = .Pipe;
+        proc.stdout_behavior = .Pipe;
+        proc.progress_node = opts.progress_node;
+
+        var stderr: std.ArrayList(u8) = .empty;
+        var stdout: std.ArrayList(u8) = .empty;
+
+        try proc.spawn();
+        errdefer _ = proc.kill() catch {};
+
+        try proc.collectOutput(gpa, &stdout, &stderr, 50 * 1024);
+        const term = try proc.wait();
+        if (stderr.items.len > 0)
+            try step.result_error_msgs.append(gpa, stderr.items);
+        try step.handleChildProcessTerm(term);
+        step.result_failed_command = null;
+    }
+};
